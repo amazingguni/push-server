@@ -1,44 +1,87 @@
-from typing import List
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, status
+from fastapi.security import OAuth2PasswordRequestForm
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from dependencies import oauth2_scheme, websocket_connection_manager
+from push.domain.entity.user import User
+
+fake_users_db = {
+    "johndoe": {
+        "username": "johndoe",
+        "full_name": "John Doe",
+        "email": "johndoe@example.com",
+        "hashed_password": "fakehashedsecret",
+        "disabled": False,
+    },
+    "alice": {
+        "username": "alice",
+        "full_name": "Alice Wonderson",
+        "email": "alice@example.com",
+        "hashed_password": "fakehashedsecret2",
+        "disabled": True,
+    },
+}
+
+def fake_hash_password(password: str):
+    return "fakehashed" + password
+
+class UserInDB(User):
+    hashed_password: str
+
+def get_user(db, username: str):
+    if username in db:
+        user_dict = db[username]
+        return UserInDB(**user_dict)
+
+def fake_decode_token(token):
+    # This doesn't provide any security at all
+    # Check the next version
+    user = get_user(fake_users_db, token)
+    return user
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    user = fake_decode_token(token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"})
+    return user
+
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
 
 
 def create_app() -> FastAPI:
     app = FastAPI()
-    class ConnectionManager:
-        def __init__(self):
-            self.active_connections: List[WebSocket] = []
-
-        async def connect(self, websocket: WebSocket):
-            await websocket.accept()
-            self.active_connections.append(websocket)
-
-        def disconnect(self, websocket: WebSocket):
-            self.active_connections.remove(websocket)
-
-        async def send_personal_message(self, message: str, websocket: WebSocket):
-            await websocket.send_text(message)
-
-        async def broadcast(self, message: str):
-            for connection in self.active_connections:
-                await connection.send_text(message)
-
-
-    manager = ConnectionManager()
     
-    @app.websocket("/ws/{client_id}")
-    async def websocket_endpoint(websocket: WebSocket, client_id: int):
-        await manager.connect(websocket)
-        try:
-            while True:
-                data = await websocket.receive_text()
-                await manager.send_personal_message(f"You wrote: {data}", websocket)
-                await manager.broadcast(f"Client #{client_id} says: {data}")
-        except WebSocketDisconnect:
-            manager.disconnect(websocket)
-            await manager.broadcast(f"Client #{client_id} left the chat")
+    @app.websocket("/ws/{user_id}")
+    async def websocket_endpoint(
+        websocket: WebSocket, user_id: int, 
+        websocket_connection_manager=Depends(websocket_connection_manager)):
+        await websocket.accept()
+        await websocket_connection_manager.connect(user_id=user_id, ws=websocket)
+        await websocket.close()
 
+    @app.post("/token")
+    async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+        user_dict = fake_users_db.get(form_data.username)
+        if not user_dict:
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        user = UserInDB(**user_dict)
+        hashed_password = fake_hash_password(form_data.password)
+        if not hashed_password == user.hashed_password:
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+
+        return {"access_token": user.username, "token_type": "bearer"}
+
+    @app.get('/users/me')
+    async def read_users_me(current_user:User = Depends(get_current_user)):
+        return current_user
+        
     return app
 
 app = create_app()

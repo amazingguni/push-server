@@ -1,21 +1,20 @@
 import logging
 from asyncio import sleep
-from unittest import mock
 
-import pytest
 from fakeredis.aioredis import FakeRedis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocket
 
-from push.adapter.push_connection_manager import RedisPushConnectionManager
+from push.adapter.websocket_connection_manager import \
+    RedisWebSocketConnectionManager
 
 logger = logging.getLogger(__name__)
 
 async def test_basic_scenario():
     app = FastAPI()
     conn = FakeRedis()
-    manager = RedisPushConnectionManager(conn)
+    manager = RedisWebSocketConnectionManager(conn)
 
     @app.websocket('/ws/{user_id}')
     async def websocket_endpoint(ws: WebSocket, user_id:str):

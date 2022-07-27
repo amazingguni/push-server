@@ -33,7 +33,7 @@ async def websocket_receiver_handler(ws: WebSocket):
     except WebSocketDisconnect as e:
         logger.exception(e)
 
-class RedisPushConnectionManager:
+class RedisWebSocketConnectionManager:
     def __init__(self, conn: Redis):
         self.conn = conn
 
